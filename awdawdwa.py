@@ -330,6 +330,112 @@ def pipeline_completo(ruta_csv):
 	print("\nPipeline completado.")
 
 
+def grafico_lineas_acumuladas(df, columna_fecha, columna_valor, titulo="Acumulado"):
+	if columna_fecha not in df.columns or columna_valor not in df.columns:
+		print(f"Faltan columnas necesarias.")
+		return
+	df_copia = df.copy()
+	df_copia[columna_fecha] = pd.to_datetime(df_copia[columna_fecha], errors='coerce')
+	df_copia = df_copia.dropna(subset=[columna_fecha]).sort_values(columna_fecha)
+	df_copia["acumulado"] = df_copia[columna_valor].cumsum()
+	plt.figure(figsize=(10, 5))
+	plt.plot(df_copia[columna_fecha], df_copia["acumulado"], color='teal', linewidth=2)
+	plt.fill_between(df_copia[columna_fecha], df_copia["acumulado"], alpha=0.2, color='teal')
+	plt.xlabel("Fecha")
+	plt.ylabel(f"Acumulado {columna_valor}")
+	plt.title(titulo)
+	plt.xticks(rotation=45)
+	plt.grid(True, linestyle='--', alpha=0.6)
+	plt.tight_layout()
+	plt.show()
+
+
+def calcular_tasa_aprobacion(df):
+	if "Reviews_Received" not in df.columns or "Changes_Requested" not in df.columns:
+		return {}
+	total_revisados = df["Reviews_Received"].sum()
+	total_rechazados = df["Changes_Requested"].sum()
+	aprobados = total_revisados - total_rechazados
+	tasa = round((aprobados / total_revisados) * 100, 2) if total_revisados > 0 else 0
+	return {
+		"total_revisados": int(total_revisados),
+		"total_rechazados": int(total_rechazados),
+		"aprobados_directos": int(aprobados),
+		"tasa_aprobacion_pct": tasa,
+	}
+
+
+def imprimir_tasa_aprobacion(df):
+	resultado = calcular_tasa_aprobacion(df)
+	if not resultado:
+		print("Sin datos de revisión.")
+		return
+	print("\n" + "="*55)
+	print("  TASA DE APROBACIÓN DE PRs")
+	print("="*55)
+	for k, v in resultado.items():
+		print(f"  {k:<35}: {v}")
+	print()
+
+
+def comparar_dos_periodos(df, columna_fecha, columna_valor, fecha_corte):
+	if columna_fecha not in df.columns or columna_valor not in df.columns:
+		return
+	df = df.copy()
+	df[columna_fecha] = pd.to_datetime(df[columna_fecha], errors='coerce')
+	fecha_corte = pd.to_datetime(fecha_corte)
+	periodo_a = df[df[columna_fecha] < fecha_corte][columna_valor].dropna()
+	periodo_b = df[df[columna_fecha] >= fecha_corte][columna_valor].dropna()
+	print(f"\n  Comparación de '{columna_valor}' antes/después de {fecha_corte.date()}")
+	print(f"  Periodo A — media: {periodo_a.mean():.2f}, n={len(periodo_a)}")
+	print(f"  Periodo B — media: {periodo_b.mean():.2f}, n={len(periodo_b)}")
+	if len(periodo_a) > 0 and len(periodo_b) > 0:
+		delta = round(periodo_b.mean() - periodo_a.mean(), 2)
+		signo = "+" if delta > 0 else ""
+		print(f"  Diferencia: {signo}{delta}")
+	print()
+
+
+def grafico_doble_eje(df, columna_x, columna_y1, columna_y2):
+	if not all(c in df.columns for c in [columna_x, columna_y1, columna_y2]):
+		print("Faltan columnas para gráfico de doble eje.")
+		return
+	fig, ax1 = plt.subplots(figsize=(10, 5))
+	ax1.set_xlabel(columna_x)
+	ax1.set_ylabel(columna_y1, color='blue')
+	ax1.plot(df[columna_x], df[columna_y1], color='blue', marker='o', label=columna_y1)
+	ax1.tick_params(axis='y', labelcolor='blue')
+	ax2 = ax1.twinx()
+	ax2.set_ylabel(columna_y2, color='red')
+	ax2.plot(df[columna_x], df[columna_y2], color='red', marker='s', linestyle='--', label=columna_y2)
+	ax2.tick_params(axis='y', labelcolor='red')
+	fig.suptitle(f"{columna_y1} vs {columna_y2}", fontsize=13, fontweight='bold')
+	fig.tight_layout()
+	plt.show()
+
+
+def contar_prs_por_estado_categoria(df):
+	if "PR_Category" not in df.columns:
+		df = clasificar_pr_por_tamanio(df)
+	if "PR_Category" not in df.columns:
+		print("No se pudo calcular PR_Category.")
+		return pd.DataFrame()
+	return df["PR_Category"].value_counts().reset_index().rename(
+		columns={"index": "Categoría", "PR_Category": "Cantidad"}
+	)
+
+
+def imprimir_tabla_categorias(df):
+	tabla = contar_prs_por_estado_categoria(df)
+	if tabla.empty:
+		return
+	print("\n" + "="*40)
+	print("  DISTRIBUCIÓN POR CATEGORÍA DE PR")
+	print("="*40)
+	print(tabla.to_string(index=False))
+	print()
+
+
 if __name__ == "__main__":
 	ruta = "drimo_dataset_prs.csv"
 	df = leer_csv_con_validacion(ruta)
