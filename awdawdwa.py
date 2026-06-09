@@ -436,6 +436,214 @@ def imprimir_tabla_categorias(df):
 	print()
 
 
+def calcular_score_contribuidor(df, columna_autor):
+	if columna_autor not in df.columns:
+		return pd.DataFrame()
+	df = df.copy()
+	resumen = df.groupby(columna_autor).agg(
+		prs=("PR_Size_Lines", "count"),
+		size_promedio=("PR_Size_Lines", "mean"),
+		merge_time_promedio=("Merge_Time_Hours", "mean"),
+	).reset_index()
+	resumen["score"] = (
+		resumen["prs"] * 0.5
+		- resumen["merge_time_promedio"] * 0.3
+		- resumen["size_promedio"] * 0.0005
+	).round(2)
+	return resumen.sort_values("score", ascending=False).reset_index(drop=True)
+
+
+def imprimir_score_contribuidores(df, columna_autor):
+	tabla = calcular_score_contribuidor(df, columna_autor)
+	if tabla.empty:
+		print("Sin datos de score.")
+		return
+	print("\n" + "="*55)
+	print("  RANKING DE SCORE POR CONTRIBUIDOR")
+	print("="*55)
+	print(tabla.to_string(index=False))
+	print()
+
+
+def grafico_radar(categorias, valores, titulo="Radar KPIs"):
+	n = len(categorias)
+	if n < 3:
+		print("Se necesitan al menos 3 categorías para el radar.")
+		return
+	angulos = [i * 2 * 3.14159 / n for i in range(n)]
+	angulos += angulos[:1]
+	valores_cierre = list(valores) + [valores[0]]
+	_, ax = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
+	ax.plot(angulos, valores_cierre, color='purple', linewidth=2)
+	ax.fill(angulos, valores_cierre, color='purple', alpha=0.25)
+	ax.set_xticks(angulos[:-1])
+	ax.set_xticklabels(categorias, fontsize=10)
+	ax.set_title(titulo, fontsize=13, fontweight='bold', pad=15)
+	plt.tight_layout()
+	plt.show()
+
+
+def normalizar_columna(df, columna):
+	if columna not in df.columns:
+		return df
+	df = df.copy()
+	col_min = df[columna].min()
+	col_max = df[columna].max()
+	rango = col_max - col_min
+	df[f"{columna}_norm"] = ((df[columna] - col_min) / rango).round(4) if rango > 0 else 0
+	return df
+
+
+def normalizar_kpis(df, columnas):
+	for col in columnas:
+		df = normalizar_columna(df, col)
+	return df
+
+
+def grafico_barras_apiladas(df, columna_grupo, columnas_valores, titulo="Barras Apiladas"):
+	disponibles = [c for c in columnas_valores if c in df.columns]
+	if columna_grupo not in df.columns or not disponibles:
+		print("Columnas insuficientes para barras apiladas.")
+		return
+	resumen = df.groupby(columna_grupo)[disponibles].sum()
+	resumen.plot(kind='bar', stacked=True, figsize=(10, 6), colormap='tab10', edgecolor='black')
+	plt.title(titulo)
+	plt.xlabel(columna_grupo)
+	plt.ylabel("Total")
+	plt.xticks(rotation=45, ha='right')
+	plt.legend(loc='upper right')
+	plt.grid(True, axis='y', linestyle='--', alpha=0.5)
+	plt.tight_layout()
+	plt.show()
+
+
+def calcular_velocidad_equipo(df, columna_fecha, columna_pr):
+	if columna_fecha not in df.columns or columna_pr not in df.columns:
+		return {}
+	df = df.copy()
+	df[columna_fecha] = pd.to_datetime(df[columna_fecha], errors='coerce')
+	df = df.dropna(subset=[columna_fecha])
+	dias_activos = (df[columna_fecha].max() - df[columna_fecha].min()).days or 1
+	total_prs = len(df)
+	return {
+		"total_prs": total_prs,
+		"dias_activos": dias_activos,
+		"prs_por_dia": round(total_prs / dias_activos, 2),
+		"prs_por_semana": round(total_prs / dias_activos * 7, 2),
+	}
+
+
+def imprimir_velocidad_equipo(df, columna_fecha, columna_pr):
+	resultado = calcular_velocidad_equipo(df, columna_fecha, columna_pr)
+	if not resultado:
+		print("Sin datos de velocidad.")
+		return
+	print("\n" + "="*55)
+	print("  VELOCIDAD DEL EQUIPO")
+	print("="*55)
+	for k, v in resultado.items():
+		print(f"  {k:<30}: {v}")
+	print()
+
+
+def exportar_resumen_csv(df, columna_autor, ruta="resumen_autores.csv"):
+	if columna_autor not in df.columns:
+		print(f"Columna '{columna_autor}' no encontrada.")
+		return
+	columnas_num = df.select_dtypes(include='number').columns.tolist()
+	resumen = df.groupby(columna_autor)[columnas_num].mean().round(2).reset_index()
+	resumen.to_csv(ruta, index=False, encoding='utf-8')
+	print(f"Resumen exportado en '{ruta}' ({len(resumen)} autores).")
+
+
+def detectar_contribuidores_inactivos(df, columna_autor, columna_fecha, dias_umbral=30):
+	if columna_autor not in df.columns or columna_fecha not in df.columns:
+		return []
+	df = df.copy()
+	df[columna_fecha] = pd.to_datetime(df[columna_fecha], errors='coerce')
+	df = df.dropna(subset=[columna_fecha])
+	fecha_max = df[columna_fecha].max()
+	ultimo_pr = df.groupby(columna_autor)[columna_fecha].max()
+	inactivos = ultimo_pr[ultimo_pr < (fecha_max - pd.Timedelta(days=dias_umbral))]
+	return list(inactivos.index)
+
+
+def imprimir_inactivos(df, columna_autor, columna_fecha, dias_umbral=30):
+	inactivos = detectar_contribuidores_inactivos(df, columna_autor, columna_fecha, dias_umbral)
+	print(f"\n  Contribuidores sin actividad en los últimos {dias_umbral} días: {len(inactivos)}")
+	for login in inactivos:
+		print(f"    - {login}")
+	print()
+
+
+def grafico_dispersion_con_colores(df, columna_x, columna_y, columna_color, titulo="Dispersión"):
+	if not all(c in df.columns for c in [columna_x, columna_y, columna_color]):
+		print("Faltan columnas para el gráfico.")
+		return
+	categorias = df[columna_color].dropna().unique()
+	colores = plt.cm.tab10.colors
+	plt.figure(figsize=(9, 5))
+	for i, cat in enumerate(categorias):
+		subset = df[df[columna_color] == cat]
+		plt.scatter(subset[columna_x], subset[columna_y],
+					label=str(cat), color=colores[i % len(colores)], alpha=0.7)
+	plt.xlabel(columna_x)
+	plt.ylabel(columna_y)
+	plt.title(titulo)
+	plt.legend(title=columna_color)
+	plt.grid(True, linestyle='--', alpha=0.5)
+	plt.tight_layout()
+	plt.show()
+
+
+def calcular_ratio_reviews(df, columna_autor):
+	if columna_autor not in df.columns:
+		return pd.DataFrame()
+	columnas_req = ["Reviews_Received", "Reviews_Given"]
+	disponibles = [c for c in columnas_req if c in df.columns]
+	if not disponibles:
+		return pd.DataFrame()
+	resumen = df.groupby(columna_autor)[disponibles].sum().reset_index()
+	if "Reviews_Received" in resumen and "Reviews_Given" in resumen:
+		resumen["ratio_dado_recibido"] = (
+			resumen["Reviews_Given"] / resumen["Reviews_Received"].replace(0, float('nan'))
+		).round(2).fillna(0)
+	return resumen
+
+
+def imprimir_ratio_reviews(df, columna_autor):
+	tabla = calcular_ratio_reviews(df, columna_autor)
+	if tabla.empty:
+		print("Sin datos de ratio de reviews.")
+		return
+	print("\n" + "="*55)
+	print("  RATIO REVIEWS DADOS / RECIBIDOS")
+	print("="*55)
+	print(tabla.to_string(index=False))
+	print()
+
+
+def grafico_evolucion_merge_time(df, columna_fecha, columna_merge_time):
+	if columna_fecha not in df.columns or columna_merge_time not in df.columns:
+		print("Columnas no encontradas.")
+		return
+	df = df.copy()
+	df[columna_fecha] = pd.to_datetime(df[columna_fecha], errors='coerce')
+	df = df.dropna(subset=[columna_fecha]).sort_values(columna_fecha)
+	df["mes"] = df[columna_fecha].dt.to_period("M").apply(lambda r: r.start_time)
+	mensual = df.groupby("mes")[columna_merge_time].mean().reset_index()
+	plt.figure(figsize=(10, 5))
+	plt.bar(mensual["mes"].astype(str), mensual[columna_merge_time],
+			color='coral', edgecolor='black')
+	plt.xlabel("Mes")
+	plt.ylabel("Merge Time Promedio (horas)")
+	plt.title("Evolución Mensual del Merge Time")
+	plt.xticks(rotation=45, ha='right')
+	plt.grid(True, axis='y', linestyle='--', alpha=0.6)
+	plt.tight_layout()
+	plt.show()
+
+
 if __name__ == "__main__":
 	ruta = "drimo_dataset_prs.csv"
 	df = leer_csv_con_validacion(ruta)
